@@ -1,87 +1,111 @@
-require "json"
+require 'json'
 require 'date'
 
-data_path = 'data/input.json'
-data_read = File.read(data_path)
-
-# Engine that read input and render rental's prices
-class Engine
-  attr_reader :cars, :rentals
-
-  def initialize(data_read)
-    @data = JSON.parse(data_read)
-    @cars = @data['cars'].map {|car| Car.new(car['id'], car['price_per_day'], car['price_per_km'])}
-    @rentals = @data['rentals'].map do |rental|
-      set_car = @cars.find { |car| car.id == rental["car_id"]}
-      Rental.new(rental['id'], set_car, rental['start_date'], rental['end_date'], rental['distance'])
-    end
-  end
-
-  def rental_price_to_json
-    JSON.pretty_generate({rentals: @rentals.map(&:to_hash)})
-  end
-end
-
-# Car Object
 class Car
-  attr_reader :id, :price_per_day, :price_per_km
+  attr_reader :price_per_day, :price_per_km
 
-  def initialize(id, price_per_day, price_per_km)
-    @id = id
-    @price_per_day = price_per_day
-    @price_per_km = price_per_km
+  def initialize(attributes = {})
+    @id = attributes['id']
+    @price_per_day = attributes['price_per_day']
+    @price_per_km = attributes['price_per_km']
   end
 end
 
-# Rental Object
 class Rental
-  attr_reader :id, :car, :start_date, :end_date, :distance
-  def initialize(id, car, start_date, end_date, distance)
-    @id = id
-    @car = car
-    @start_date = start_date
-    @end_date = end_date
-    @distance = distance
-    @commission = {}
+  attr_reader :id, :car_id, :start_date, :end_date, :distance
+
+  def initialize(attributes = {})
+    @id = attributes['id']
+    @car_id = attributes['car_id']
+    @start_date = attributes['start_date']
+    @end_date = attributes['end_date']
+    @distance = attributes['distance']
   end
 
-  def days
-    (Date.parse(@end_date) - Date.parse(@start_date)).to_i + 1
+  def car
+    # Returns the object car associated with the current rental
+    car_h = parse_input('cars').find { |c| c['id'] == car_id }
+    Car.new(car_h)
   end
 
-  def price
-    decreasing_days = 0
-    (1..days).to_a.each do |day|
-      decreasing_days += if day > 10
-                           0.5
-                         elsif day > 4
-                           0.7
-                         elsif day > 1
-                           0.9
-                         elsif day == 1
-                           1
-                         end
+  def duration
+    number_of_days(start_date, end_date)
+  end
+
+  def time_price
+    price = car.price_per_day
+    if duration / 11 >= 1
+      price += 3 * price * 0.9 +
+               6 * price * 0.7 +
+               (duration % 11 + 1) * price * 0.5
+    elsif duration / 5 >= 1
+      price += 3 * price * 0.9 +
+               (duration % 5 + 1) * price * 0.7
+    elsif duration / 2 >= 1
+      price += (duration % 2 + 1) * price * 0.9
     end
-    (distance * @car.price_per_km + decreasing_days * @car.price_per_day).to_i
+    price.to_i
+  end
+
+  def distance_price
+    distance * car.price_per_km
+  end
+
+  def total_price
+    time_price + distance_price
   end
 
   def commission
-    @total_commission = price * 0.3
-    @insurance_fee = (@total_commission * 0.5).to_i
-    @assistance_fee = 100 * days
-    @drivy_fee = (@total_commission - @insurance_fee - @assistance_fee).to_i
-    {insurance_fee: @insurance_fee, assistance_fee: @assistance_fee, drivy_fee: @drivy_fee}
+    insurance_fee = (0.3 * total_price / 2).to_i
+    assistance_fee = (duration * 100).to_i
+    {
+      insurance_fee: insurance_fee,
+      assistance_fee: assistance_fee,
+      drivy_fee: (0.3 * total_price - insurance_fee - assistance_fee).to_i
+    }
   end
 
-  def to_hash
-    {id: @id, price: price, commission: commission}
+  private
+
+  def number_of_days(start_date, end_date)
+    (parse_date(end_date) - parse_date(start_date)).to_i + 1
+  end
+
+  def parse_date(date)
+    Date.parse(date)
   end
 end
 
-# Running program
-engine = Engine.new(data_read)
-my_output = engine.rental_price_to_json
-
-File.open('my_output.json', 'w') do |file|
-  file.write(my_output)
+def parse_input(data)
+  # This method parses the input and returns the arrays asked
+  # (be it cars or rentals)
+  input_path = 'data/input.json'
+  serialized_input = File.read(input_path)
+  input = JSON.parse(serialized_input)
+  input[data]
 end
+
+def save_json(output)
+  h_output = {}
+  h_output['rentals'] = output
+  File.open('data/output.json', 'wb') do |file|
+    file.write(JSON.pretty_generate(h_output))
+  end
+end
+
+def process
+  # This method builds the structure of the output and then calls #save_json
+  # to actually save it in data/output.json
+  output = []
+  parse_input('rentals').each do |rental_h|
+    rental = Rental.new(rental_h)
+    output << {
+      id: rental.id,
+      price: rental.total_price,
+      commission: rental.commission
+    }
+  end
+  save_json(output)
+end
+
+process
